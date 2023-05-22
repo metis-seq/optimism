@@ -17,6 +17,7 @@ type MessageRelayerOptions = {
   l2RpcProvider: Provider
   l1Wallet: Signer
   fromL2TransactionIndex?: number
+  bedrockL2Index?: number
 }
 
 type MessageRelayerMetrics = {
@@ -58,6 +59,12 @@ export class MessageRelayerService extends BaseServiceV2<
         fromL2TransactionIndex: {
           validator: validators.num,
           desc: 'Index of the first L2 transaction to start processing from.',
+          default: 0,
+          public: true,
+        },
+        bedrockL2Index: {
+          validator: validators.num,
+          desc: 'Index of the L2 block height bedrock start with.',
           default: 0,
           public: true,
         },
@@ -113,6 +120,15 @@ export class MessageRelayerService extends BaseServiceV2<
     }
 
     this.logger.info(`checking L2 block ${this.state.highestCheckedL2Tx}`)
+
+    if (
+      this.options.bedrockL2Index !== null &&
+      this.options.bedrockL2Index >= 0 &&
+      this.state.highestCheckedL2Tx >= this.options.bedrockL2Index &&
+      !this.state.messenger.bedrock
+    ) {
+      this.state.messenger.bedrock = true
+    }
 
     const block =
       await this.state.messenger.l2Provider.getBlockWithTransactions(
