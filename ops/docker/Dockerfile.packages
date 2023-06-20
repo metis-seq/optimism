@@ -13,7 +13,7 @@
 # Docker build cache hit rate. `alpine` is chosen as the base image for the
 # first stage because it's the smallest image that have access to the `cp
 # --parents -t` command (by installing the `coreutils` package).
-FROM alpine:3.16 as manifests
+FROM --platform=linux/amd64 alpine:3.16 as manifests
 RUN apk add coreutils
 
 WORKDIR /tmp
@@ -28,8 +28,8 @@ RUN mkdir manifests && \
   # .nvmrc
   cp .nvmrc ../manifests/
 
-FROM ethereumoptimism/foundry:latest as foundry
-FROM node:16-alpine3.14 as base
+FROM --platform=linux/amd64 ethereumoptimism/foundry:latest as foundry
+FROM --platform=linux/amd64 node:16-alpine3.14 as base
 
 # Base: install deps
 RUN apk --no-cache add curl \
@@ -71,64 +71,64 @@ COPY ./integration-tests ./integration-tests
 
 RUN yarn build
 
-FROM base as actor-tests-bedrock
+FROM --platform=linux/amd64 base as actor-tests-bedrock
 WORKDIR /opt/optimism/packages/actor-tests
 ENTRYPOINT ["yarn", "run:bedrock"]
 
-FROM base as deployer
+FROM --platform=linux/amd64 base as deployer
 WORKDIR /opt/optimism/packages/contracts
 COPY ./ops/scripts/deployer.sh .
 CMD ["yarn", "run", "deploy"]
 
-FROM alpine:3.16.2 as contract-artifacts-bedrock
+FROM --platform=linux/amd64 alpine:3.16.2 as contract-artifacts-bedrock
 RUN mkdir -p /artifacts
 WORKDIR /artifacts
 COPY --from=base /opt/optimism/packages/contracts-bedrock/artifacts  /artifacts/contracts-bedrock
 CMD ["echo", "0"]
 
-FROM base as deployer-bedrock
+FROM --platform=linux/amd64 base as deployer-bedrock
 WORKDIR /opt/optimism/packages/contracts-bedrock
 CMD ["yarn", "run", "deploy"]
 
-FROM base as data-transport-layer
+FROM --platform=linux/amd64 base as data-transport-layer
 WORKDIR /opt/optimism/packages/data-transport-layer
 COPY ./ops/scripts/dtl.sh .
 CMD ["node", "dist/src/services/run.js"]
 
-FROM base as integration-tests
+FROM --platform=linux/amd64  base as integration-tests
 WORKDIR /opt/optimism/integration-tests
 COPY ./ops/scripts/integration-tests.sh ./
 CMD ["yarn", "test:integration"]
 
 
-FROM base as message-relayer
+FROM --platform=linux/amd64 base as message-relayer
 WORKDIR /opt/optimism/packages/message-relayer
 COPY ./ops/scripts/relayer.sh .
 CMD ["npm", "run", "start"]
 
 
-FROM base as fault-detector
+FROM  --platform=linux/amd64 base as fault-detector
 WORKDIR /opt/optimism/packages/fault-detector
 COPY ./ops/scripts/detector.sh .
 CMD ["npm", "run", "start"]
 
 
-FROM base as replica-healthcheck
+FROM --platform=linux/amd64 base as replica-healthcheck
 WORKDIR /opt/optimism/packages/replica-healthcheck
 ENTRYPOINT ["npm", "run", "start"]
 
-FROM base as balance-mon
+FROM --platform=linux/amd64 base as balance-mon
 WORKDIR /opt/optimism/packages/chain-mon
 ENTRYPOINT ["npm", "run", "start:balance-mon"]
 
-FROM base as drippie-mon
+FROM --platform=linux/amd64 base as drippie-mon
 WORKDIR /opt/optimism/packages/chain-mon
 ENTRYPOINT ["npm", "run", "start:drippie-mon"]
 
-FROM base as balance-monitor
+FROM --platform=linux/amd64 base as balance-monitor
 WORKDIR /opt/optimism/packages/balance-monitor
 ENTRYPOINT ["yarn", "run", "start:prod"]
 
-FROM base as wd-mon
+FROM --platform=linux/amd64 base as wd-mon
 WORKDIR /opt/optimism/packages/chain-mon
 ENTRYPOINT ["yarn", "run", "start:wd-mon"]

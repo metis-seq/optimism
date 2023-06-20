@@ -154,22 +154,22 @@ services:
     volumes:
       - "/tmp/op_log:/op_log:ro"
 
-  relayer:
-    depends_on:
-      - l1
-      - l2
-      - op-node
-    deploy:
-      replicas: 0
-    build:
-      context: ..
-      dockerfile: ./ops/docker/Dockerfile.packages
-      target: message-relayer
-    image: ethereumoptimism/message-relayer:${DOCKER_TAG_MESSAGE_RELAYER:-latest}
-    entrypoint: ./relayer.sh
-    environment:
-      MESSAGE_RELAYER__L1_RPC_PROVIDER: http://l1:8545
-      MESSAGE_RELAYER__L2_RPC_PROVIDER: http://l2:8545
-      MESSAGE_RELAYER__L1_WALLET: '0xdbda1821b80551c9d65939329250298aa3472ba22feea921c0cf5d620ea67b97'
-      MESSAGE_RELAYER__BEDROCK_L2_INDEX: 0
-      RETRIES: 60
+  # relayer:
+  #   depends_on:
+  #     - l1
+  #     - l2
+  #     - op-node
+  #   deploy:
+  #     replicas: 0
+  #   build:
+  #     context: ..
+  #     dockerfile: ./ops/docker/Dockerfile.packages
+  #     target: message-relayer
+  #   image: ethereumoptimism/message-relayer:${DOCKER_TAG_MESSAGE_RELAYER:-latest}
+  #   entrypoint: ./relayer.sh
+  #   environment:
+  #     MESSAGE_RELAYER__L1_RPC_PROVIDER: http://l1:8545
+  #     MESSAGE_RELAYER__L2_RPC_PROVIDER: http://l2:8545
+  #     MESSAGE_RELAYER__L1_WALLET: '0xdbda1821b80551c9d65939329250298aa3472ba22feea921c0cf5d620ea67b97'
+  #     MESSAGE_RELAYER__BEDROCK_L2_INDEX: 0
+  #     RETRIES: 60

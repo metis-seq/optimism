@@ -3,6 +3,7 @@ package sequencer
 import (
 	"context"
 	"crypto/ecdsa"
+	"errors"
 	"fmt"
 	"math/big"
 	"strings"
@@ -304,6 +305,236 @@ func (d *Driver) CraftBatchTx(
 		default:
 			return nil, err
 		}
+	}
+
+}
+
+func createLegacyTx(opts *bind.TransactOpts, contract *common.Address, input []byte) (*types.Transaction, error) {
+	if opts.GasFeeCap != nil || opts.GasTipCap != nil {
+		return nil, errors.New("maxFeePerGas or maxPriorityFeePerGas specified but london is not active yet")
+	}
+	// Normalize value
+	value := opts.Value
+	if value == nil {
+		value = new(big.Int)
+	}
+	// Estimate GasPrice
+	gasPrice := opts.GasPrice
+	if gasPrice == nil {
+		return nil, errors.New("gas price is null")
+
+	}
+	// Estimate GasLimit
+	gasLimit := opts.GasLimit
+	if opts.GasLimit == 0 {
+		return nil, errors.New("gas limit is null")
+	}
+	// create the transaction
+	if opts.Nonce == nil {
+		return nil, errors.New("nonce is null")
+	}
+	nonce := opts.Nonce.Uint64()
+	baseTx := &types.LegacyTx{
+		To:       contract,
+		Nonce:    nonce,
+		GasPrice: gasPrice,
+		Gas:      gasLimit,
+		Value:    value,
+		Data:     input,
+	}
+	return types.NewTx(baseTx), nil
+}
+
+func createDynamicTx(opts *bind.TransactOpts, contract *common.Address, input []byte, head *types.Header) (*types.Transaction, error) {
+	// Normalize value
+	value := opts.Value
+	if value == nil {
+		value = new(big.Int)
+	}
+	// Estimate TipCap
+	gasTipCap := opts.GasTipCap
+	if gasTipCap == nil {
+		return nil, errors.New("gas tip is null")
+	}
+	// Estimate FeeCap
+	gasFeeCap := opts.GasFeeCap
+	if gasFeeCap == nil {
+		return nil, errors.New("gasFeeCap is null")
+	}
+	if gasFeeCap.Cmp(gasTipCap) < 0 {
+		return nil, fmt.Errorf("maxFeePerGas (%v) < maxPriorityFeePerGas (%v)", gasFeeCap, gasTipCap)
+	}
+	// Estimate GasLimit
+	gasLimit := opts.GasLimit
+	if opts.GasLimit == 0 {
+		return nil, errors.New("gas limit is null")
+	}
+
+	if opts.Nonce == nil {
+		return nil, errors.New("nonce is null")
+	}
+	nonce := opts.Nonce.Uint64()
+	baseTx := &types.DynamicFeeTx{
+		To:        contract,
+		Nonce:     nonce,
+		GasFeeCap: gasFeeCap,
+		GasTipCap: gasTipCap,
+		Gas:       gasLimit,
+		Value:     value,
+		Data:      input,
+	}
+	return types.NewTx(baseTx), nil
+}
+
+func (d *Driver) GetUnsignedCraftBatchTx(
+	ctx context.Context,
+	start, end, nonce *big.Int,
+) (*types.Transaction, error) {
+
+	name := d.cfg.Name
+
+	log.Info(name+" crafting batch tx", "start", start, "end", end,
+		"nonce", nonce, "type", d.cfg.BatchType.String())
+
+	var (
+		batchElements  []BatchElement
+		totalTxSize    uint64
+		hasLargeNextTx bool
+	)
+	for i := new(big.Int).Set(start); i.Cmp(end) < 0; i.Add(i, bigOne) {
+		block, err := d.cfg.L2Client.BlockByNumber(ctx, i)
+		if err != nil {
+			return nil, err
+		}
+
+		// For each sequencer transaction, update our running total with the
+		// size of the transaction.
+		batchElement := BatchElementFromBlock(block)
+		if batchElement.IsSequencerTx() {
+			// Abort once the total size estimate is greater than the maximum
+			// configured size. This is a conservative estimate, as the total
+			// calldata size will be greater when batch contexts are included.
+			// Below this set will be further whittled until the raw call data
+			// size also adheres to this constraint.
+			txLen := batchElement.Tx.Size()
+			if totalTxSize+uint64(TxLenSize+txLen) > d.cfg.MaxPlaintextBatchSize {
+				// Adding this transaction causes the batch to be too large, but
+				// we also record if the batch size without the transaction
+				// fails to meet our minimum size constraint. This is used below
+				// to determine whether or not to ignore the minimum size check,
+				// since in this case it can't be avoided.
+				hasLargeNextTx = totalTxSize < d.cfg.MinTxSize
+				break
+			}
+			totalTxSize += uint64(TxLenSize + txLen)
+		}
+
+		batchElements = append(batchElements, batchElement)
+	}
+
+	shouldStartAt := start.Uint64()
+	var pruneCount int
+	for {
+		batchParams, err := GenSequencerBatchParams(
+			shouldStartAt, d.cfg.BlockOffset, batchElements,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		// Encode the batch arguments using the configured encoding type.
+		batchArguments, err := batchParams.Serialize(d.cfg.BatchType)
+		if err != nil {
+			return nil, err
+		}
+
+		appendSequencerBatchID := d.ctcABI.Methods[appendSequencerBatchMethodName].ID
+		calldata := append(appendSequencerBatchID, batchArguments...)
+
+		log.Info(name+" testing batch size",
+			"calldata_size", len(calldata),
+			"min_tx_size", d.cfg.MinTxSize,
+			"max_tx_size", d.cfg.MaxTxSize)
+
+		// Continue pruning until plaintext calldata size is less than
+		// configured max.
+		calldataSize := uint64(len(calldata))
+		if calldataSize > d.cfg.MaxTxSize {
+			oldLen := len(batchElements)
+			newBatchElementsLen := (oldLen * 9) / 10
+			batchElements = batchElements[:newBatchElementsLen]
+			log.Info(name+" pruned batch",
+				"old_num_txs", oldLen,
+				"new_num_txs", newBatchElementsLen)
+			pruneCount++
+			continue
+		}
+
+		// There are two specific cases in which we choose to ignore the minimum
+		// L1 tx size. These cases are permitted since they arise from
+		// situations where the difference between the configured MinTxSize and
+		// MaxTxSize is less than the maximum L2 tx size permitted by the
+		// mempool.
+		//
+		// This configuration is useful when trying to ensure the profitability
+		// is sufficient, and we permit batches to be submitted with less than
+		// our desired configuration only if it is not possible to construct a
+		// batch within the given parameters.
+		//
+		// The two cases are:
+		// 1. When the next elenent is larger than the difference between the
+		//    min and the max, causing the batch to be too small without the
+		//    element, and too large with it.
+		// 2. When pruning a batch that exceeds the mac size below, and then
+		//    becomes too small as a result. This is avoided by only applying
+		//    the min size check when the pruneCount is zero.
+		ignoreMinTxSize := pruneCount > 0 || hasLargeNextTx
+		if !ignoreMinTxSize && calldataSize < d.cfg.MinTxSize {
+			log.Info(name+" batch tx size below minimum",
+				"num_txs", len(batchElements))
+			return nil, nil
+		}
+
+		d.metrics.NumElementsPerBatch().Observe(float64(len(batchElements)))
+		d.metrics.BatchPruneCount.Set(float64(pruneCount))
+
+		log.Info(name+" batch constructed",
+			"num_txs", len(batchElements),
+			"final_size", len(calldata),
+			"batch_type", d.cfg.BatchType)
+
+		opts, err := bind.NewKeyedTransactorWithChainID(
+			d.cfg.PrivKey, d.cfg.ChainID,
+		)
+		if err != nil {
+			return nil, err
+		}
+		opts.Context = ctx
+		opts.Nonce = nonce
+		opts.NoSend = true
+
+		// 	input, err := d.sccContractABI.Pack("appendStateBatch", stateRoots, offsetStartsAtIndex)
+		// if err != nil {
+		// 	return nil, err
+		// }
+		// var rawTx *types.Transaction
+		contract := d.cfg.CTCAddr
+		if opts.GasPrice != nil {
+			return createLegacyTx(opts, &contract, calldata)
+		} else if opts.GasFeeCap != nil && opts.GasTipCap != nil {
+			return createDynamicTx(opts, &contract, calldata, nil)
+		}
+		head, errHead := d.cfg.L1Client.HeaderByNumber(context.TODO(), nil)
+		if errHead == nil && head.BaseFee != nil {
+			return createDynamicTx(opts, &contract, calldata, head)
+		}
+		price, err := d.cfg.L1Client.SuggestGasPrice(context.TODO())
+		if err != nil {
+			return nil, err
+		}
+		opts.GasPrice = price
+		return createLegacyTx(opts, &contract, calldata)
+
 	}
 }
 

@@ -3,6 +3,7 @@ package proposer
 import (
 	"context"
 	"crypto/ecdsa"
+	"errors"
 	"fmt"
 	"math/big"
 	"strings"
@@ -43,6 +44,7 @@ type Config struct {
 type Driver struct {
 	cfg            Config
 	sccContract    *scc.StateCommitmentChain
+	sccContractABI abi.ABI
 	rawSccContract *bind.BoundContract
 	ctcContract    *ctc.CanonicalTransactionChain
 	walletAddr     common.Address
@@ -80,6 +82,7 @@ func NewDriver(cfg Config) (*Driver, error) {
 	return &Driver{
 		cfg:            cfg,
 		sccContract:    sccContract,
+		sccContractABI: parsed,
 		rawSccContract: rawSccContract,
 		ctcContract:    ctcContract,
 		walletAddr:     walletAddr,
@@ -281,4 +284,187 @@ func (d *Driver) SendTransaction(
 	tx *types.Transaction,
 ) error {
 	return d.cfg.L1Client.SendTransaction(ctx, tx)
+}
+
+func createLegacyTx(opts *bind.TransactOpts, contract *common.Address, input []byte) (*types.Transaction, error) {
+	if opts.GasFeeCap != nil || opts.GasTipCap != nil {
+		return nil, errors.New("maxFeePerGas or maxPriorityFeePerGas specified but london is not active yet")
+	}
+	// Normalize value
+	value := opts.Value
+	if value == nil {
+		value = new(big.Int)
+	}
+	// Estimate GasPrice
+	gasPrice := opts.GasPrice
+	if gasPrice == nil {
+		return nil, errors.New("gas price is null")
+
+	}
+	// Estimate GasLimit
+	gasLimit := opts.GasLimit
+	if opts.GasLimit == 0 {
+		return nil, errors.New("gas limit is null")
+	}
+	// create the transaction
+	if opts.Nonce == nil {
+		return nil, errors.New("nonce is null")
+	}
+	nonce := opts.Nonce.Uint64()
+	baseTx := &types.LegacyTx{
+		To:       contract,
+		Nonce:    nonce,
+		GasPrice: gasPrice,
+		Gas:      gasLimit,
+		Value:    value,
+		Data:     input,
+	}
+	return types.NewTx(baseTx), nil
+}
+
+func createDynamicTx(opts *bind.TransactOpts, contract *common.Address, input []byte, head *types.Header) (*types.Transaction, error) {
+	// Normalize value
+	value := opts.Value
+	if value == nil {
+		value = new(big.Int)
+	}
+	// Estimate TipCap
+	gasTipCap := opts.GasTipCap
+	if gasTipCap == nil {
+		return nil, errors.New("gas tip is null")
+	}
+	// Estimate FeeCap
+	gasFeeCap := opts.GasFeeCap
+	if gasFeeCap == nil {
+		return nil, errors.New("gasFeeCap is null")
+	}
+	if gasFeeCap.Cmp(gasTipCap) < 0 {
+		return nil, fmt.Errorf("maxFeePerGas (%v) < maxPriorityFeePerGas (%v)", gasFeeCap, gasTipCap)
+	}
+	// Estimate GasLimit
+	gasLimit := opts.GasLimit
+	if opts.GasLimit == 0 {
+		return nil, errors.New("gas limit is null")
+	}
+
+	if opts.Nonce == nil {
+		return nil, errors.New("nonce is null")
+	}
+	nonce := opts.Nonce.Uint64()
+	baseTx := &types.DynamicFeeTx{
+		To:        contract,
+		Nonce:     nonce,
+		GasFeeCap: gasFeeCap,
+		GasTipCap: gasTipCap,
+		Gas:       gasLimit,
+		Value:     value,
+		Data:      input,
+	}
+	return types.NewTx(baseTx), nil
+}
+
+func (d *Driver) GetUnsignedCraftBatchTx(
+	ctx context.Context,
+	start, end, nonce *big.Int,
+) (*types.Transaction, error) {
+
+	name := d.cfg.Name
+
+	log.Info(name+" crafting uinsigned batch tx", "start", start, "end", end,
+		"nonce", nonce)
+
+	var stateRoots [][stateRootSize]byte
+	for i := new(big.Int).Set(start); i.Cmp(end) < 0; i.Add(i, bigOne) {
+		// Consume state roots until reach our maximum tx size.
+		if uint64(len(stateRoots)) > d.cfg.MaxStateRootElements {
+			break
+		}
+
+		block, err := d.cfg.L2Client.BlockByNumber(ctx, i)
+		if err != nil {
+			return nil, err
+		}
+
+		stateRoots = append(stateRoots, block.Root())
+	}
+
+	// Abort if we don't have enough state roots to meet our minimum
+	// requirement.
+	if uint64(len(stateRoots)) < d.cfg.MinStateRootElements {
+		log.Info(name+" number of state roots  below minimum",
+			"num_state_roots", len(stateRoots),
+			"min_state_roots", d.cfg.MinStateRootElements)
+		return nil, nil
+	}
+
+	d.metrics.NumElementsPerBatch().Observe(float64(len(stateRoots)))
+
+	log.Info(name+" batch constructed", "num_state_roots", len(stateRoots))
+
+	// parsedAbi, err := d.sccMetaData.GetAbi()
+	// if err != nil {
+	// 	return nil, err
+	// }
+	// if parsedAbi == nil {
+	// 	return nil, errors.New("GetABI returned nil")
+	// }
+
+	opts, err := bind.NewKeyedTransactorWithChainID(
+		d.cfg.PrivKey, d.cfg.ChainID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	opts.Context = ctx
+	opts.Nonce = nonce
+	opts.NoSend = true
+
+	blockOffset := new(big.Int).SetUint64(d.cfg.BlockOffset)
+	offsetStartsAtIndex := new(big.Int).Sub(start, blockOffset)
+
+	calldata, err := d.sccContractABI.Pack("appendStateBatch", stateRoots, offsetStartsAtIndex)
+	if err != nil {
+		return nil, err
+	}
+	// var rawTx *types.Transaction
+	contract := d.cfg.SCCAddr
+	if opts.GasPrice != nil {
+		return createLegacyTx(opts, &contract, calldata)
+	} else if opts.GasFeeCap != nil && opts.GasTipCap != nil {
+		return createDynamicTx(opts, &contract, calldata, nil)
+	}
+	head, errHead := d.cfg.L1Client.HeaderByNumber(context.TODO(), nil)
+	if errHead == nil && head.BaseFee != nil {
+		return createDynamicTx(opts, &contract, calldata, head)
+	}
+	price, err := d.cfg.L1Client.SuggestGasPrice(context.TODO())
+	if err != nil {
+		return nil, err
+	}
+	opts.GasPrice = price
+	return createLegacyTx(opts, &contract, calldata)
+	// tx, err := d.sccContract.AppendStateBatch(
+	// 	opts, stateRoots, offsetStartsAtIndex,
+	// )
+	// switch {
+	// case err == nil:
+	// 	return tx, nil
+
+	// // If the transaction failed because the backend does not support
+	// // eth_maxPriorityFeePerGas, fallback to using the default constant.
+	// // Currently Alchemy is the only backend provider that exposes this method,
+	// // so in the event their API is unreachable we can fallback to a degraded
+	// // mode of operation. This also applies to our test environments, as hardhat
+	// // doesn't support the query either.
+	// case drivers.IsMaxPriorityFeePerGasNotFoundError(err):
+	// 	log.Warn(d.cfg.Name + " eth_maxPriorityFeePerGas is unsupported " +
+	// 		"by current backend, using fallback gasTipCap")
+	// 	opts.GasTipCap = drivers.FallbackGasTipCap
+	// 	return d.sccContract.AppendStateBatch(
+	// 		opts, stateRoots, offsetStartsAtIndex,
+	// 	)
+
+	// default:
+	// 	return nil, err
+	// }
 }

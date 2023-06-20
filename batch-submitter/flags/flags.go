@@ -250,6 +250,13 @@ var (
 		Usage:  "Whether or not to disable HTTP/2 support.",
 		EnvVar: prefixEnvVar("HTTP2_DISABLE"),
 	}
+
+	DecSeqValidHeightFlag = cli.Uint64Flag{
+		Name:   "dec-seq-valid-height",
+		Usage:  "decentralized sequencer valid L2 block height",
+		Value:  9223372036854775807, // 2 ** 63 -1
+		EnvVar: prefixEnvVar("DEC_SEQ_VALID_HEIGHT"),
+	}
 )
 
 var requiredFlags = []cli.Flag{
@@ -293,6 +300,7 @@ var optionalFlags = []cli.Flag{
 	MetricsHostnameFlag,
 	MetricsPortFlag,
 	HTTP2DisableFlag,
+	DecSeqValidHeightFlag,
 }
 
 // Flags contains the list of configuration options available to the binary.

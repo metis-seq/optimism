@@ -185,6 +185,57 @@ func SignClearingTx(
 	)
 }
 
+// GetUnSignedClearingTx creates a unsigned clearing tranaction which sends 0 ETH back to
+// the sender's address. EstimateGas is used to set an appropriate gas limit.
+func GetUnSignedClearingTx(
+	name string,
+	ctx context.Context,
+	walletAddr common.Address,
+	nonce uint64,
+	l1Client L1Client,
+	chainID *big.Int,
+) (*types.Transaction, error) {
+
+	gasTipCap, err := l1Client.SuggestGasTipCap(ctx)
+	if err != nil {
+		if !IsMaxPriorityFeePerGasNotFoundError(err) {
+			return nil, err
+		}
+
+		// If the transaction failed because the backend does not support
+		// eth_maxPriorityFeePerGas, fallback to using the default constant.
+		// Currently Alchemy is the only backend provider that exposes this
+		// method, so in the event their API is unreachable we can fallback to a
+		// degraded mode of operation. This also applies to our test
+		// environments, as hardhat doesn't support the query either.
+		log.Warn(name + " eth_maxPriorityFeePerGas is unsupported " +
+			"by current backend, using fallback gasTipCap")
+		gasTipCap = FallbackGasTipCap
+	}
+
+	head, err := l1Client.HeaderByNumber(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	gasFeeCap := txmgr.CalcGasFeeCap(head.BaseFee, gasTipCap)
+
+	gasLimit, err := l1Client.EstimateGas(ctx, ethereum.CallMsg{
+		From:      walletAddr,
+		To:        &walletAddr,
+		GasFeeCap: gasFeeCap,
+		GasTipCap: gasTipCap,
+		Value:     nil,
+		Data:      nil,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return CraftClearingTx(walletAddr, nonce, gasFeeCap, gasTipCap, gasLimit), nil
+
+}
+
 // CraftClearingTx creates an unsigned clearing transaction which sends 0 ETH
 // back to the sender's address.
 func CraftClearingTx(

@@ -56,6 +56,11 @@ type Driver interface {
 		start, end, nonce *big.Int,
 	) (*types.Transaction, error)
 
+	GetUnsignedCraftBatchTx(
+		ctx context.Context,
+		start, end, nonce *big.Int,
+	) (*types.Transaction, error)
+
 	// UpdateGasPrice signs an otherwise identical txn to the one provided but
 	// with updated gas prices sampled from the existing network conditions.
 	//
@@ -88,6 +93,9 @@ type Service struct {
 	metrics metrics.Metrics
 
 	wg sync.WaitGroup
+	// txData map for store txdata of height
+	rwLock    sync.RWMutex
+	txDataMap map[uint64][]byte
 }
 
 func NewService(cfg ServiceConfig) *Service {
@@ -98,11 +106,12 @@ func NewService(cfg ServiceConfig) *Service {
 	)
 
 	return &Service{
-		cfg:     cfg,
-		ctx:     ctx,
-		cancel:  cancel,
-		txMgr:   txMgr,
-		metrics: cfg.Driver.Metrics(),
+		cfg:       cfg,
+		ctx:       ctx,
+		cancel:    cancel,
+		txMgr:     txMgr,
+		metrics:   cfg.Driver.Metrics(),
+		txDataMap: make(map[uint64][]byte),
 	}
 }
 
@@ -118,6 +127,42 @@ func (s *Service) Stop() error {
 	return nil
 }
 
+func (s *Service) GetRawTxByStartId(start uint64) *types.Transaction {
+	s.rwLock.RLock()
+	defer s.rwLock.RUnlock()
+	data := s.txDataMap[start]
+	if data == nil {
+		return nil
+	}
+	tx := &types.Transaction{}
+	err := tx.UnmarshalBinary(data)
+	if err != nil {
+		return nil
+	}
+	return tx
+}
+
+func (s *Service) UpdataRawTxByStartId(start64, end64, nonce64 uint64) {
+	s.rwLock.Lock()
+	defer s.rwLock.Unlock()
+	nonce := new(big.Int).SetUint64(nonce64)
+	start := new(big.Int).SetUint64(start64)
+	end := new(big.Int).SetUint64(end64)
+	tx, err := s.cfg.Driver.GetUnsignedCraftBatchTx(
+		s.ctx, start, end, nonce,
+	)
+	if err != nil {
+		log.Error("GetUnsignedCraftBatchTx ", "err", err)
+		return
+
+	}
+	var txBuf bytes.Buffer
+	if err := tx.EncodeRLP(&txBuf); err != nil {
+		log.Error(" unable to encode batch tx", "err", err)
+		return
+	}
+	s.txDataMap[start64] = txBuf.Bytes()
+}
 func (s *Service) eventLoop() {
 	defer s.wg.Done()
 
@@ -182,7 +227,7 @@ func (s *Service) eventLoop() {
 			nonce := new(big.Int).SetUint64(nonce64)
 
 			batchTxBuildStart := time.Now()
-			tx, err := s.cfg.Driver.CraftBatchTx(
+			tx, err := s.cfg.Driver.GetUnsignedCraftBatchTx(
 				s.ctx, start, end, nonce,
 			)
 			if err != nil {
@@ -203,11 +248,16 @@ func (s *Service) eventLoop() {
 			}
 			s.metrics.BatchSizeBytes().Observe(float64(len(txBuf.Bytes())))
 
-			// Construct the transaction submission clousure that will attempt
-			// to send the next transaction at the given nonce and gas price.
-			updateGasPrice := func(ctx context.Context) (*types.Transaction, error) {
-				log.Info(name+" updating batch tx gas price", "start", start,
-					"end", end, "nonce", nonce)
+			s.rwLock.Lock()
+			s.txDataMap[start.Uint64()] = txBuf.Bytes()
+			s.rwLock.Unlock()
+
+			/*
+				// Construct the transaction submission clousure that will attempt
+				// to send the next transaction at the given nonce and gas price.
+				updateGasPrice := func(ctx context.Context) (*types.Transaction, error) {
+					log.Info(name+" updating batch tx gas price", "start", start,
+						"end", end, "nonce", nonce)
 
 				return s.cfg.Driver.UpdateGasPrice(ctx, tx)
 			}
@@ -237,17 +287,60 @@ func (s *Service) eventLoop() {
 				continue
 			}
 
-			// The transaction was successfully submitted.
-			log.Info(name+" batch tx successfully published",
-				"tx_hash", receipt.TxHash)
-			s.metrics.BatchesSubmitted().Inc()
-			s.metrics.SubmissionTimestamp().Set(float64(time.Now().UnixNano() / 1e6))
-
+				// The transaction was successfully submitted.
+				log.Info(name+" batch tx successfully published",
+					"tx_hash", receipt.TxHash)
+				s.metrics.BatchesSubmitted().Inc()
+				s.metrics.SubmissionTimestamp().Set(float64(time.Now().UnixNano() / 1e6))
+			*/
 		case err := <-s.ctx.Done():
 			log.Error(name+" service shutting down", "err", err)
 			return
 		}
 	}
+}
+
+func (s *Service) SendRawTx(txData []byte) error {
+	tx := &types.Transaction{}
+	err := tx.UnmarshalBinary(txData)
+	if err != nil {
+		return err
+	}
+	batchConfirmationStart := time.Now()
+	err = s.cfg.Driver.SendTransaction(s.ctx, tx)
+	if err != nil {
+		return err
+	}
+	receipt, err := s.cfg.L1Client.TransactionReceipt(context.TODO(), tx.Hash())
+	if err != nil {
+		log.Error("ALT TransactionReceipt tx err ", err)
+		return err
+	}
+	// Record the confirmation time and gas used if we receive a
+	// receipt, as this indicates the transaction confirmed. We record
+	// these metrics here as the transaction may have reverted, and will
+	// abort below.
+	if receipt != nil {
+		batchConfirmationTime := time.Since(batchConfirmationStart) /
+			time.Millisecond
+		s.metrics.BatchConfirmationTimeMs().Set(float64(batchConfirmationTime))
+		s.metrics.SubmissionGasUsedWei().Set(float64(receipt.GasUsed))
+	}
+
+	if err != nil {
+		log.Error(" unable to publish batch tx",
+			"err", err)
+		s.metrics.FailedSubmissions().Inc()
+		return err
+	}
+
+	// The transaction was successfully submitted.
+	log.Info(" batch tx successfully published",
+		"tx_hash", receipt.TxHash)
+	s.metrics.BatchesSubmitted().Inc()
+	s.metrics.SubmissionTimestamp().Set(float64(time.Now().UnixNano() / 1e6))
+
+	return nil
 }
 
 func weiToEth64(wei *big.Int) float64 {
