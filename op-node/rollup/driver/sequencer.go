@@ -13,6 +13,8 @@ import (
 	"github.com/ethereum-optimism/optimism/op-node/eth"
 	"github.com/ethereum-optimism/optimism/op-node/rollup"
 	"github.com/ethereum-optimism/optimism/op-node/rollup/derive"
+
+	"github.com/ethereum-optimism/optimism/op-node/sources"
 )
 
 type Downloader interface {
@@ -44,13 +46,16 @@ type Sequencer struct {
 	// timeNow enables sequencer testing to mock the time
 	timeNow func() time.Time
 
+	posClient *sources.PosClient
+
 	nextAction time.Time
 }
 
-func NewSequencer(log log.Logger, cfg *rollup.Config, engine derive.ResettableEngineControl, attributesBuilder derive.AttributesBuilder, l1OriginSelector L1OriginSelectorIface, metrics SequencerMetrics) *Sequencer {
+func NewSequencer(log log.Logger, cfg *rollup.Config, posClient *sources.PosClient, engine derive.ResettableEngineControl, attributesBuilder derive.AttributesBuilder, l1OriginSelector L1OriginSelectorIface, metrics SequencerMetrics) *Sequencer {
 	return &Sequencer{
 		log:              log,
 		config:           cfg,
+		posClient:        posClient,
 		engine:           engine,
 		timeNow:          time.Now,
 		attrBuilder:      attributesBuilder,
@@ -62,6 +67,16 @@ func NewSequencer(log log.Logger, cfg *rollup.Config, engine derive.ResettableEn
 // StartBuildingBlock initiates a block building job on top of the given L2 head, safe and finalized blocks, and using the provided l1Origin.
 func (d *Sequencer) StartBuildingBlock(ctx context.Context) error {
 	l2Head := d.engine.UnsafeL2Head()
+	if d.posClient != nil && l2Head.Number+1 >= uint64(d.config.DecSequencerHeight) {
+		expectSeq, err := d.posClient.GetSequencerByHeight(ctx, int64(l2Head.Number+1))
+		if err != nil {
+			return err
+		}
+		// current is not seq
+		if expectSeq.String() != d.config.SequencerAddress.String() {
+			return nil
+		}
+	}
 
 	// Figure out which L1 origin block we're going to be building on top of.
 	l1Origin, err := d.l1OriginSelector.FindL1Origin(ctx, l2Head)

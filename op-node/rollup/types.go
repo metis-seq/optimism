@@ -34,6 +34,8 @@ var (
 	ErrChainIDsSame                  = errors.New("L1 and L2 chain IDs must be different")
 	ErrL1ChainIDNotPositive          = errors.New("L1 chain ID must be non-zero and positive")
 	ErrL2ChainIDNotPositive          = errors.New("L2 chain ID must be non-zero and positive")
+	ErrPosChainIDNotPositive         = errors.New("pos chain ID must be non-zero and positive")
+	ErrDecSequencerHeight            = errors.New("decentralized sequencer valid height must be positive")
 )
 
 type Genesis struct {
@@ -68,6 +70,15 @@ type Config struct {
 	L1ChainID *big.Int `json:"l1_chain_id"`
 	// Required to identify the L2 network and create p2p signatures unique for this chain.
 	L2ChainID *big.Int `json:"l2_chain_id"`
+
+	// pos config
+	PosChainUrl string   `json:"pos_chain_url"`
+	PosChainID  *big.Int `json:"pos_chain_id"`
+	//
+	DecSequencerHeight int64 `json:"dec_sequencer_height"`
+
+	//
+	SequencerAddress common.Address `json:"sequencer_address"`
 
 	// RegolithTime sets the activation time of the Regolith network-upgrade:
 	// a pre-mainnet Bedrock change that addresses findings of the Sherlock contest related to deposit attributes.
@@ -244,6 +255,13 @@ func (cfg *Config) Check() error {
 	if cfg.L2ChainID.Sign() < 1 {
 		return ErrL2ChainIDNotPositive
 	}
+	// fmt.Println("cfg.PosChainID ", cfg.PosChainID)
+	if cfg.PosChainID.Sign() < 1 {
+		return ErrPosChainIDNotPositive
+	}
+	if cfg.DecSequencerHeight <= 0 {
+		return ErrDecSequencerHeight
+	}
 	return nil
 }
 
@@ -305,7 +323,7 @@ func (c *Config) LogDescription(log log.Logger, l2Chains map[string]string) {
 	log.Info("Rollup Config", "l2_chain_id", c.L2ChainID, "l2_network", networkL2, "l1_chain_id", c.L1ChainID,
 		"l1_network", networkL1, "l2_start_time", c.Genesis.L2Time, "l2_block_hash", c.Genesis.L2.Hash.String(),
 		"l2_block_number", c.Genesis.L2.Number, "l1_block_hash", c.Genesis.L1.Hash.String(),
-		"l1_block_number", c.Genesis.L1.Number, "regolith_time", fmtForkTimeOrUnset(c.RegolithTime))
+		"l1_block_number", c.Genesis.L1.Number, "regolith_time", fmtForkTimeOrUnset(c.RegolithTime), "pos_chain_id", c.PosChainID)
 }
 
 func fmtForkTimeOrUnset(v *uint64) string {

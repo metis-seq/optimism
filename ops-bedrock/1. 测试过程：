@@ -1,7 +1,12 @@
 1. 测试过程：
 1）启动docker ----》测试 L1 和 L2是否起来
 
+// L1 
+curl -X POST  -H 'Content-Type:application/json' --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":0}' 127.0.0.1:8545
+// L2
 curl -X POST  -H 'Content-Type:application/json' --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":0}' 127.0.0.1:9545
+
+curl -X POST  -H 'Content-Type:application/json' --data '{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["0x1", true],"id":1}' 127.0.0.1:9545
 
 
 Jida, [2023/5/23 2:01 AM]
@@ -22,3 +27,8 @@ github.com/Jason6060/op-geth
 可以注释掉
 docker-compose-metis.yml  中 relayer
 
+1. 后续看测试，是否需要进一步 在 OP-geth中blockheader 增加 sequencer信息
+
+重点关注
+engine.ExecutableData
+engine.PayloadAttributes

@@ -386,6 +386,11 @@ func TestConfig_Check(t *testing.T) {
 			modifier:    func(cfg *Config) { cfg.L2ChainID = big.NewInt(0) },
 			expectedErr: ErrL2ChainIDNotPositive,
 		},
+		{
+			name:        "PosL2ChainIdNegative",
+			modifier:    func(cfg *Config) { cfg.PosChainID = big.NewInt(-1) },
+			expectedErr: ErrPosChainIDNotPositive,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

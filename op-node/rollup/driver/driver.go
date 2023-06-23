@@ -10,6 +10,8 @@ import (
 	"github.com/ethereum-optimism/optimism/op-node/eth"
 	"github.com/ethereum-optimism/optimism/op-node/rollup"
 	"github.com/ethereum-optimism/optimism/op-node/rollup/derive"
+
+	"github.com/ethereum-optimism/optimism/op-node/sources"
 )
 
 type Metrics interface {
@@ -113,7 +115,10 @@ func NewDriver(driverCfg *Config, cfg *rollup.Config, l2 L2Chain, l1 L1Chain, al
 	attrBuilder := derive.NewFetchingAttributesBuilder(cfg, l1, l2)
 	engine := derivationPipeline
 	meteredEngine := NewMeteredEngine(cfg, engine, metrics, log)
-	sequencer := NewSequencer(log, cfg, meteredEngine, attrBuilder, findL1Origin, metrics)
+
+	posClientCfg := sources.PosClientDefaultConfig(cfg)
+	posClient, _ := sources.NewPosClient(posClientCfg)
+	sequencer := NewSequencer(log, cfg, posClient, meteredEngine, attrBuilder, findL1Origin, metrics)
 
 	return &Driver{
 		l1State:          l1State,
