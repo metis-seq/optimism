@@ -65,6 +65,10 @@ func NewSequencer(log log.Logger, cfg *rollup.Config, posClient *sources.PosClie
 	}
 }
 
+var (
+	NotCurrentSeqencer = errors.New("is not sequencer now")
+)
+
 // StartBuildingBlock initiates a block building job on top of the given L2 head, safe and finalized blocks, and using the provided l1Origin.
 func (d *Sequencer) StartBuildingBlock(ctx context.Context) error {
 	l2Head := d.engine.UnsafeL2Head()
@@ -75,8 +79,8 @@ func (d *Sequencer) StartBuildingBlock(ctx context.Context) error {
 		}
 		// current is not seq
 		if strings.ToLower(expectSeq.String()) != strings.ToLower(d.config.SequencerAddress.String()) {
-			d.log.Info("l2Head.Number ", l2Head.Number, "SequencerAddress is", d.config.SequencerAddress.String(), " not expectSeq ", expectSeq.String())
-			return errors.New("is not sequencer now")
+			fmt.Println("l2Head.Number ", l2Head.Number, "SequencerAddress is", d.config.SequencerAddress.String(), " not expectSeq ", expectSeq.String())
+			return NotCurrentSeqencer
 		}
 	}
 
@@ -259,6 +263,11 @@ func (d *Sequencer) RunNextSequencerAction(ctx context.Context) (*eth.ExecutionP
 			} else if errors.Is(err, derive.ErrTemporary) {
 				d.log.Error("sequencer temporarily failed to start building new block", "err", err)
 				d.nextAction = d.timeNow().Add(time.Second)
+			} else if errors.Is(err, NotCurrentSeqencer) {
+				// just reset
+				//d.log.Error("sequencer failed to seal new block, requiring derivation reset", "err", err)
+				d.nextAction = d.timeNow().Add(time.Second * time.Duration(d.config.BlockTime)) // hold off from sequencing for a full block
+				d.engine.Reset()
 			} else {
 				d.log.Error("sequencer failed to start building new block with unclassified error", "err", err)
 				d.nextAction = d.timeNow().Add(time.Second)
