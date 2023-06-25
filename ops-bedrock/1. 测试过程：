@@ -21,6 +21,20 @@ Jida, [2023/5/23 2:02 AM]
 下载 github.com/Jason6060/optimism
 github.com/Jason6060/op-geth
 
+
+cat "deploy-config/devnetL1.json" | jq -r ".l1GenesisBlockTimestamp = \"0x6497f2ad\"" > /tmp/bedrock-devnet-deploy-config.json
+
+
+cat ".devnet/rollup.json" | jq -r ".pos_chain_url = \"127.0.0.1\", .pos_chain_id = 1234"  
+ go run cmd/main.go genesis devnet \
+        --deploy-config /tmp/bedrock-devnet-deploy-config.json \
+        --outfile.l1 genesis-l1.json \
+        --outfile.l2 genesis-l2.json \
+        --outfile.rollup rollup.json
+
+
+先编译op geth
+DOCKER_BUILDKIT=1 docker-compose -f docker-compose-multi-metis.yml build op-geth 
 2. 测试时，在optimism 目录下，运行 ./ops-bedrock/devnet-up-metis.sh
 改  IGNORE_BUILD=0 
 
