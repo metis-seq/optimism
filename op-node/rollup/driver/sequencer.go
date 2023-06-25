@@ -74,7 +74,8 @@ func (d *Sequencer) StartBuildingBlock(ctx context.Context) error {
 		}
 		// current is not seq
 		if expectSeq.String() != d.config.SequencerAddress.String() {
-			return nil
+			d.log.Info("SequencerAddress is ", d.config.SequencerAddress.String(), " not expectSeq ", expectSeq.String())
+			return errors.New("is not sequencer now")
 		}
 	}
 

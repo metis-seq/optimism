@@ -2,13 +2,13 @@ package sources
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"io/ioutil"
+	//"encoding/json"
+	//"fmt"
+	//"io/ioutil"
 
 	"github.com/ethereum-optimism/optimism/op-node/rollup"
 	"github.com/ethereum/go-ethereum/common"
-	"net/http"
+	//"net/http"
 )
 
 type PosClientConfig struct {
@@ -91,29 +91,35 @@ type ValidatorInfo struct {
 //	  -H 'accept: application/json'
 func (s *PosClient) GetSequencerByHeight(ctx context.Context, height int64) (common.Address, error) {
 
-	path := fmt.Sprintf("%v/metis/span/latest", s.config.PosURL)
-	client := &http.Client{}
-	resp, err := client.Get(path)
-	if err != nil {
-		return common.HexToAddress("0x0"), err
+	if height%2 == 0 {
+		return common.HexToAddress("0x690000000000000000000000000000000000000a"), nil
 	}
+	return common.HexToAddress("0x690000000000000000000000000000000000000b"), nil
+	/*
+		path := fmt.Sprintf("%v/metis/span/latest", s.config.PosURL)
+		client := &http.Client{}
+		resp, err := client.Get(path)
+		if err != nil {
+			return common.HexToAddress("0x0"), err
+		}
 
-	defer resp.Body.Close()
-	// Read the response body
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return common.HexToAddress("0x0"), err
-	}
+		defer resp.Body.Close()
+		// Read the response body
+		body, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			return common.HexToAddress("0x0"), err
+		}
 
-	var result MetisSpanResut
+		var result MetisSpanResut
 
-	err = json.Unmarshal([]byte(body), &result)
-	if err != nil {
-		return common.HexToAddress("0x0"), err
-	}
-	if result.StartBlock <= height && height <= result.EndBlock {
+		err = json.Unmarshal([]byte(body), &result)
+		if err != nil {
+			return common.HexToAddress("0x0"), err
+		}
+		if result.StartBlock <= height && height <= result.EndBlock {
+			return common.HexToAddress(result.SelectedProducers[0].Signer), nil
+		}
+		// current don't check height
 		return common.HexToAddress(result.SelectedProducers[0].Signer), nil
-	}
-	// current don't check height
-	return common.HexToAddress(result.SelectedProducers[0].Signer), nil
+	*/
 }
