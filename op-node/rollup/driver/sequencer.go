@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -73,8 +74,8 @@ func (d *Sequencer) StartBuildingBlock(ctx context.Context) error {
 			return err
 		}
 		// current is not seq
-		if expectSeq.String() != d.config.SequencerAddress.String() {
-			d.log.Info("SequencerAddress is ", d.config.SequencerAddress.String(), " not expectSeq ", expectSeq.String())
+		if strings.ToLower(expectSeq.String()) != strings.ToLower(d.config.SequencerAddress.String()) {
+			d.log.Info("l2Head.Number ", l2Head.Number, "SequencerAddress is", d.config.SequencerAddress.String(), " not expectSeq ", expectSeq.String())
 			return errors.New("is not sequencer now")
 		}
 	}

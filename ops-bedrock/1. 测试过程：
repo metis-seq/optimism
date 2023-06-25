@@ -46,3 +46,6 @@ docker-compose-metis.yml  中 relayer
 重点关注
 engine.ExecutableData
 engine.PayloadAttributes
+
+sh ./ops-bedrock/devnet-up-multi-metis.sh
+docker-compose -f ops-bedrock/docker-compose-multi-metis.yml down

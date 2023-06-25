@@ -88,7 +88,7 @@ services:
       # - "${PWD}/p2p-node-key.txt:/config/p2p-node-key.txt"
       # - "${PWD}/test-jwt-secret.txt:/config/test-jwt-secret.txt"
       - "${PWD}/op-node-config:/config"
-      - "${PWD}/../.devnet/rollup1.json:/rollup.json"
+      - "${PWD}/devnet-multi/rollup1.json:/rollup.json"
       - "/tmp/op_log1:/op_log"
 
   op-node2:
@@ -132,7 +132,7 @@ services:
       # - "${PWD}/p2p-node-key.txt:/config/p2p-node-key.txt"
       # - "${PWD}/test-jwt-secret.txt:/config/test-jwt-secret.txt"
       - "${PWD}/op-node-config:/config"
-      - "${PWD}/../.devnet/rollup2.json:/rollup.json"
+      - "${PWD}/devnet-multi/rollup2.json:/rollup.json"
       - "/tmp/op_log2:/op_log"
 
   op-proposer:
