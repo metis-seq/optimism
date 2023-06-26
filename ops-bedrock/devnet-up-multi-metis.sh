@@ -117,10 +117,10 @@ L2OO_ADDRESS="0x6900000000000000000000000000000000000000"
   cd ops-bedrock
   echo "Bringing up devnet..."
   L2OO_ADDRESS="$L2OO_ADDRESS" \
-      docker-compose -f docker-compose-multi-metis.yml up -d op-node1 op-node2
+      docker-compose -f docker-compose-multi-metis.yml up -d op-node1 op-node2 op-node3 op-node4
 
   echo "Bringing up stateviz webserver..."
-  docker-compose -f docker-compose-metis.yml up -d stateviz
+  docker-compose -f docker-compose-multi-metis.yml up -d stateviz
 )
 
 echo "Devnet ready."
