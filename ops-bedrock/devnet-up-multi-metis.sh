@@ -81,8 +81,9 @@ if [ ! -f "$DEVNET/done" ]; then
         --outfile.rollup $DEVNET/rollup.json
     touch "$DEVNET/done"
     cat "$DEVNET/rollup.json" | jq -r ".pos_chain_url = \"127.0.0.1\"" | jq -r ".pos_chain_id = 1234"  | jq -r ".dec_sequencer_height = 1" | jq -r ".sequencer_address = \"0x690000000000000000000000000000000000000A\""  > "$DEVNET/rollup1.json"
-
     cat "$DEVNET/rollup.json" | jq -r ".pos_chain_url = \"127.0.0.1\"" | jq -r ".pos_chain_id = 1234"  | jq -r ".dec_sequencer_height = 1" | jq -r ".sequencer_address = \"0x690000000000000000000000000000000000000B\""  > "$DEVNET/rollup2.json"
+    cat "$DEVNET/rollup.json" | jq -r ".pos_chain_url = \"127.0.0.1\"" | jq -r ".pos_chain_id = 1234"  | jq -r ".dec_sequencer_height = 1" | jq -r ".sequencer_address = \"0x690000000000000000000000000000000000000C\""  > "$DEVNET/rollup3.json"
+    cat "$DEVNET/rollup.json" | jq -r ".pos_chain_url = \"127.0.0.1\"" | jq -r ".pos_chain_id = 1234"  | jq -r ".dec_sequencer_height = 1" | jq -r ".sequencer_address = \"0x690000000000000000000000000000000000000D\""  > "$DEVNET/rollup4.json"
   )
 fi
 

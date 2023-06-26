@@ -91,10 +91,16 @@ type ValidatorInfo struct {
 //	  -H 'accept: application/json'
 func (s *PosClient) GetSequencerByHeight(ctx context.Context, height int64) (common.Address, error) {
 
-	if height%2 == 0 {
+	switch height % 4 {
+	case 0:
 		return common.HexToAddress("0x690000000000000000000000000000000000000a"), nil
+	case 1:
+		return common.HexToAddress("0x690000000000000000000000000000000000000b"), nil
+	case 2:
+		return common.HexToAddress("0x690000000000000000000000000000000000000c"), nil
+	default:
+		return common.HexToAddress("0x690000000000000000000000000000000000000d"), nil
 	}
-	return common.HexToAddress("0x690000000000000000000000000000000000000b"), nil
 	/*
 		path := fmt.Sprintf("%v/metis/span/latest", s.config.PosURL)
 		client := &http.Client{}
