@@ -179,7 +179,7 @@ services:
       - "${PWD}/../.devnet/rollup3.json:/rollup.json"
       - "/tmp/op_log3:/op_log"
 
-    op-node4:
+  op-node4:
     depends_on:
       - l1
       - l2
