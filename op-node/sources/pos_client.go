@@ -2,13 +2,15 @@ package sources
 
 import (
 	"context"
-	//"encoding/json"
-	//"fmt"
-	//"io/ioutil"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io/ioutil"
+	"sync"
 
 	"github.com/ethereum-optimism/optimism/op-node/rollup"
 	"github.com/ethereum/go-ethereum/common"
-	//"net/http"
+	"net/http"
 )
 
 type PosClientConfig struct {
@@ -16,6 +18,16 @@ type PosClientConfig struct {
 	PosBlockRefsCacheSize int
 	DecSequencerHeight    int64
 }
+type SpanBlockInfo struct {
+	StartBlock int64
+	EndBlock   int64
+	Sequencer  common.Address
+}
+
+var (
+	rwLock    sync.RWMutex
+	BlockInfo = make(map[int64]SpanBlockInfo)
+)
 
 func PosClientDefaultConfig(config *rollup.Config) *PosClientConfig {
 	// Cache 3/2 worth of sequencing window of receipts and txs
@@ -91,41 +103,80 @@ type ValidatorInfo struct {
 //	  -H 'accept: application/json'
 func (s *PosClient) GetSequencerByHeight(ctx context.Context, height int64) (common.Address, error) {
 
-	switch height % 4 {
-	case 0:
-		return common.HexToAddress("0x690000000000000000000000000000000000000a"), nil
-	case 1:
-		return common.HexToAddress("0x690000000000000000000000000000000000000b"), nil
-	case 2:
-		return common.HexToAddress("0x690000000000000000000000000000000000000c"), nil
-	default:
-		return common.HexToAddress("0x690000000000000000000000000000000000000d"), nil
+	// switch height % 4 {
+	// case 0:
+	// 	return common.HexToAddress("0x690000000000000000000000000000000000000a"), nil
+	// case 1:
+	// 	return common.HexToAddress("0x690000000000000000000000000000000000000b"), nil
+	// case 2:
+	// 	return common.HexToAddress("0x690000000000000000000000000000000000000c"), nil
+	// default:
+	// 	return common.HexToAddress("0x690000000000000000000000000000000000000d"), nil
+	// }
+
+	path := fmt.Sprintf("%v/metis/span/latest", s.config.PosURL)
+	client := &http.Client{}
+	resp, err := client.Get(path)
+	if err != nil {
+		return common.HexToAddress("0x0"), err
 	}
-	/*
-		path := fmt.Sprintf("%v/metis/span/latest", s.config.PosURL)
-		client := &http.Client{}
-		resp, err := client.Get(path)
-		if err != nil {
-			return common.HexToAddress("0x0"), err
-		}
 
-		defer resp.Body.Close()
-		// Read the response body
-		body, err := ioutil.ReadAll(resp.Body)
-		if err != nil {
-			return common.HexToAddress("0x0"), err
-		}
+	defer resp.Body.Close()
+	// Read the response body
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return common.HexToAddress("0x0"), err
+	}
 
-		var result MetisSpanResut
+	var result MetisSpanResut
 
-		err = json.Unmarshal([]byte(body), &result)
-		if err != nil {
-			return common.HexToAddress("0x0"), err
-		}
-		if result.StartBlock <= height && height <= result.EndBlock {
-			return common.HexToAddress(result.SelectedProducers[0].Signer), nil
-		}
-		// current don't check height
+	err = json.Unmarshal([]byte(body), &result)
+	if err != nil {
+		return common.HexToAddress("0x0"), err
+	}
+	if result.StartBlock <= height && height <= result.EndBlock {
 		return common.HexToAddress(result.SelectedProducers[0].Signer), nil
-	*/
+	}
+	rwLock.Lock()
+	defer rwLock.Unlock()
+
+	for spanID := result.SpanID - 1; spanID >= 0; spanID = spanID - 1 {
+		// check in map
+		spanInfo, ok := BlockInfo[spanID]
+		if ok {
+			if spanInfo.StartBlock <= height && height <= spanInfo.EndBlock {
+				return spanInfo.Sequencer, nil
+			}
+			continue
+		}
+		spanPath := fmt.Sprintf("%v/metis/span/%v", s.config.PosURL, spanID)
+		spanResp, err := client.Get(spanPath)
+		if err != nil {
+			return common.HexToAddress("0x0"), err
+		}
+		defer spanResp.Body.Close()
+		bodySpan, err := ioutil.ReadAll(spanResp.Body)
+		if err != nil {
+			return common.HexToAddress("0x0"), err
+		}
+
+		var resultSpan MetisSpanResut
+		err = json.Unmarshal([]byte(bodySpan), &resultSpan)
+		if err != nil {
+			return common.HexToAddress("0x0"), err
+		}
+		if resultSpan.StartBlock <= height && height <= resultSpan.EndBlock {
+			return common.HexToAddress(resultSpan.SelectedProducers[0].Signer), nil
+		}
+		if resultSpan.SpanID < result.SpanID-2 { // add to map
+			BlockInfo[spanID] = SpanBlockInfo{
+				StartBlock: resultSpan.StartBlock,
+				EndBlock:   resultSpan.EndBlock,
+				Sequencer:  common.HexToAddress(resultSpan.SelectedProducers[0].Signer),
+			}
+		}
+	}
+	// current don't check height
+	return common.HexToAddress("0x0"), errors.New("some errors")
+
 }
